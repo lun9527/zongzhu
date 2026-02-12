@@ -1,0 +1,14 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+flask*.log
+tmp/
+outputs/
+uploads/
+extracted_assets/
+assessment-skill.zip

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>九段总助测评报告生成器</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- 引入字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>九段总助测评报告生成系统</h1>
+            <p>上传测评数据Excel，一键生成专业PDF报告</p>
+        </header>
+
+        <main>
+            <div class="upload-area" id="drop-zone">
+                <div class="icon">📄</div>
+                <h2>拖拽Excel文件到这里</h2>
+                <p>或点击上传文件</p>
+                <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+                <button class="btn-primary" onclick="document.getElementById('file-input').click()">选择文件</button>
+            </div>
+
+            <div id="progress-container" class="hidden">
+                <div class="loader"></div>
+                <p id="status-text">正在分析数据并生成报告...</p>
+            </div>
+
+            <div id="result-container" class="hidden">
+                <div class="success-icon">✅</div>
+                <h2>报告生成成功！</h2>
+                <p>共生成 <span id="file-count">0</span> 份报告</p>
+                <div id="files-list" class="files-list"></div>
+                <button class="btn-secondary" onclick="resetUpload()">继续上传</button>
+            </div>
+            
+            <div id="error-container" class="hidden">
+                <div class="error-icon">❌</div>
+                <h2>生成失败</h2>
+                <p id="error-message"></p>
+                <button class="btn-secondary" onclick="resetUpload()">重试</button>
+            </div>
+        </main>
+
+        <footer>
+            <p>© 2026 九段总助测评系统</p>
+        </footer>
+    </div>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

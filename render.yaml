@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: assessment-report
+    runtime: docker
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: MAX_CONTENT_LENGTH_MB
+        value: 20
+      - key: JOB_RETENTION_HOURS
+        value: 24
+      - key: MAX_KEPT_JOBS
+        value: 300
+      - key: GUNICORN_WORKERS
+        value: 1
+      - key: GUNICORN_THREADS
+        value: 2
+      - key: GUNICORN_TIMEOUT
+        value: 300

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Runtime data
+uploads/jobs/*
+outputs/jobs/*
+
+# Local temp
+tmp/
+
+# Local sensitive samples (avoid accidental publish)
+总助九段胜任力专业测评--3.0_*.xlsx
+九段总助测评结果报告-*.pdf

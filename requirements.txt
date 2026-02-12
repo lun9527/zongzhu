@@ -1,0 +1,9 @@
+flask
+pandas
+reportlab
+openpyxl
+xlrd
+matplotlib
+pillow
+werkzeug
+gunicorn

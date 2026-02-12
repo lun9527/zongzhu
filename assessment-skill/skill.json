@@ -1,0 +1,32 @@
+{
+  "name": "generate-assessment-report",
+  "displayName": "生成总助胜任力测评报告",
+  "description": "上传Excel测评数据，自动生成九段总助胜任力专业测评报告（PDF格式）",
+  "version": "1.0.0",
+  "author": "Assistant",
+  "parameters": {
+    "excel_file": {
+      "type": "file",
+      "description": "测评数据Excel文件路径",
+      "required": true
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "报告输出目录（可选，默认为当前目录）",
+      "required": false,
+      "default": "."
+    }
+  },
+  "output": {
+    "type": "file",
+    "description": "生成的PDF测评报告文件路径"
+  },
+  "requirements": [
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "reportlab>=4.0.0",
+    "matplotlib>=3.7.0",
+    "Pillow>=10.0.0"
+  ],
+  "python": ">=3.9"
+}
