@@ -316,6 +316,9 @@ class AssessmentReportGenerator:
         max_score = self.abilities[ability_name]['max_score']
         thresholds = self.grade_thresholds[max_score]
 
+        # 分数来源可能保留两位小数，阈值以 1 位小数定义，先对齐精度避免落入空档区间。
+        score = round(float(score), 1)
+
         for grade, (min_score, max_grade_score) in thresholds.items():
             if min_score <= score <= max_grade_score:
                 return grade
@@ -328,13 +331,14 @@ class AssessmentReportGenerator:
                 return rank
         return "一段"
 
-    def generate_report(self, excel_file, output_dir=".", output_format="pdf"):
+    def generate_report(self, excel_file, output_dir=".", output_format="pdf", progress_callback=None):
         """生成测评报告（批量处理Excel中的所有数据）
 
         Args:
             excel_file: Excel测评数据文件路径
             output_dir: 输出目录
             output_format: 输出格式，'pdf' 或 'txt'（默认为pdf）
+            progress_callback: 可选进度回调函数，签名为 progress_callback(dict)
         """
         print(f"正在读取Excel文件: {excel_file}")
 
@@ -345,13 +349,32 @@ class AssessmentReportGenerator:
             print("错误：Excel文件为空")
             return None
 
-        print(f"发现 {len(df)} 条测评数据，开始批量生成报告...\n")
+        total = len(df)
+        print(f"发现 {total} 条测评数据，开始批量生成报告...\n")
+
+        def emit_progress(payload):
+            if not progress_callback:
+                return
+            try:
+                progress_callback(payload)
+            except Exception:
+                # 进度回调故障不应影响主流程
+                pass
+
+        emit_progress({
+            'event': 'started',
+            'status': 'running',
+            'total': total,
+            'completed': 0,
+            'percent': 0.0,
+        })
 
         generated_files = []
 
         # 处理每一行数据
         for idx, row in df.iterrows():
-            print(f"[{idx+1}/{len(df)}] 正在处理第 {idx+1} 条数据...")
+            current_index = idx + 1
+            print(f"[{current_index}/{total}] 正在处理第 {current_index} 条数据...")
 
             # 提取基本信息
             user_info = {
@@ -360,6 +383,17 @@ class AssessmentReportGenerator:
                 'phone': str(row.get('【职业信息】输入手机号以便我们给您发送测评报告', '')),
                 'test_time': str(row.get('测评时间：', ''))
             }
+
+            emit_progress({
+                'event': 'item_started',
+                'status': 'running',
+                'total': total,
+                'completed': len(generated_files),
+                'percent': round(len(generated_files) * 100.0 / total, 2),
+                'current_index': current_index,
+                'current_seq': user_info['seq_no'],
+                'current_name': user_info['nickname'],
+            })
 
             # 提取能力得分
             ability_scores = {}
@@ -408,6 +442,17 @@ class AssessmentReportGenerator:
                     print(f"     段位: {rank}, 总分: {total_score:.2f}")
                 except Exception as e:
                     print(f"  ❌ 生成失败: {e}")
+                    emit_progress({
+                        'event': 'item_failed',
+                        'status': 'running',
+                        'total': total,
+                        'completed': len(generated_files),
+                        'percent': round(len(generated_files) * 100.0 / total, 2),
+                        'current_index': current_index,
+                        'current_seq': user_info['seq_no'],
+                        'current_name': user_info['nickname'],
+                        'error': str(e),
+                    })
                     continue
 
             else:
@@ -424,11 +469,31 @@ class AssessmentReportGenerator:
                 print(f"     段位: {rank}, 总分: {total_score:.2f}")
 
             generated_files.append(str(output_file))
+            emit_progress({
+                'event': 'item_completed',
+                'status': 'running',
+                'total': total,
+                'completed': len(generated_files),
+                'percent': round(len(generated_files) * 100.0 / total, 2),
+                'current_index': current_index,
+                'current_seq': user_info['seq_no'],
+                'current_name': user_info['nickname'],
+                'output_name': output_file.name,
+            })
             print()
 
         print("=" * 60)
         print(f"✨ 批处理完成！共生成 {len(generated_files)} 份报告")
         print("=" * 60)
+
+        emit_progress({
+            'event': 'completed',
+            'status': 'success',
+            'total': total,
+            'completed': len(generated_files),
+            'percent': 100.0 if total else 0.0,
+            'generated_count': len(generated_files),
+        })
 
         return generated_files
 

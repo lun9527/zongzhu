@@ -5,47 +5,94 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>九段总助测评报告生成器</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <!-- 引入字体 -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>九段总助测评报告生成系统</h1>
-            <p>上传测评数据Excel，一键生成专业PDF报告</p>
+    <div class="page">
+        <header class="topbar">
+            <div class="topbar-left">
+                <h1>九段总助测评报告生成系统</h1>
+                <p>仅网页端 · 异步生成 · 可批量下载 ZIP</p>
+            </div>
+            <div class="topbar-right">
+                <span class="badge">当前任务模式</span>
+                <span class="hint">刷新页面后任务不会保留</span>
+            </div>
         </header>
 
-        <main>
-            <div class="upload-area" id="drop-zone">
-                <div class="icon">📄</div>
-                <h2>拖拽Excel文件到这里</h2>
-                <p>或点击上传文件</p>
-                <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
-                <button class="btn-primary" onclick="document.getElementById('file-input').click()">选择文件</button>
-            </div>
+        <main class="panel">
+            <section id="state-upload" class="state-section">
+                <div class="drop-zone" id="drop-zone">
+                    <div class="drop-icon">上传 Excel</div>
+                    <h2>拖拽或点击选择测评数据文件</h2>
+                    <p>支持 `.xlsx` / `.xls`，将自动校验关键列并批量生成 PDF 报告。</p>
+                    <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+                    <button id="pick-file-btn" class="btn btn-primary">选择文件</button>
+                    <div id="selected-file" class="selected-file hidden"></div>
+                </div>
+            </section>
 
-            <div id="progress-container" class="hidden">
-                <div class="loader"></div>
-                <p id="status-text">正在分析数据并生成报告...</p>
-            </div>
+            <section id="state-running" class="state-section hidden">
+                <h2>任务执行中</h2>
+                <p id="status-text" class="status-text">任务已创建，等待执行...</p>
+                <div class="progress-wrap">
+                    <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">任务ID</div>
+                        <div id="stat-job-id" class="stat-value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">当前进度</div>
+                        <div id="stat-progress" class="stat-value">0 / 0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">完成比例</div>
+                        <div id="stat-percent" class="stat-value">0%</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">当前处理</div>
+                        <div id="stat-current" class="stat-value">-</div>
+                    </div>
+                </div>
+                <button id="cancel-view-btn" class="btn btn-ghost">返回上传页</button>
+            </section>
 
-            <div id="result-container" class="hidden">
-                <div class="success-icon">✅</div>
-                <h2>报告生成成功！</h2>
-                <p>共生成 <span id="file-count">0</span> 份报告</p>
-                <div id="files-list" class="files-list"></div>
-                <button class="btn-secondary" onclick="resetUpload()">继续上传</button>
-            </div>
-            
-            <div id="error-container" class="hidden">
-                <div class="error-icon">❌</div>
+            <section id="state-result" class="state-section hidden">
+                <div class="result-head">
+                    <div>
+                        <h2>报告生成完成</h2>
+                        <p id="result-summary">共生成 0 份报告</p>
+                    </div>
+                    <div class="result-actions">
+                        <button id="zip-download-btn" class="btn btn-primary">下载全部 ZIP</button>
+                        <button id="new-task-btn" class="btn btn-ghost">重新上传</button>
+                    </div>
+                </div>
+
+                <div class="toolbar">
+                    <input id="file-search-input" type="text" placeholder="搜索 NLZ 编号 / 昵称 / 文件名">
+                </div>
+
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th>文件名</th>
+                            <th class="col-action">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="files-tbody"></tbody>
+                </table>
+            </section>
+
+            <section id="state-error" class="state-section hidden">
                 <h2>生成失败</h2>
-                <p id="error-message"></p>
-                <button class="btn-secondary" onclick="resetUpload()">重试</button>
-            </div>
+                <p id="error-message" class="error-message"></p>
+                <button id="retry-btn" class="btn btn-ghost">返回重试</button>
+            </section>
         </main>
 
-        <footer>
+        <footer class="footer">
             <p>© 2026 九段总助测评系统</p>
         </footer>
     </div>

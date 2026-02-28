@@ -25,6 +25,7 @@ from reportlab.platypus import (
     TableStyle,
     PageBreak,
     KeepTogether,
+    CondPageBreak,
 )
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
@@ -59,6 +60,13 @@ ABILITY_ORDER = [
     '财务力', '领导力', '决策力'
 ]
 
+# 模板雷达图顺时针顺序（从12点方向开始）
+RADAR_ABILITY_ORDER = [
+    '执行力', '决策力', '领导力',
+    '财务力', '业务力', '预见力',
+    '统筹力', '优化力', '协调力',
+]
+
 
 class PDFReportGeneratorV4:
     """参考模板风格PDF生成器"""
@@ -69,10 +77,12 @@ class PDFReportGeneratorV4:
         self._register_chinese_fonts()
 
         self.page_width, self.page_height = A4
-        self.margin_top = 3.2 * cm
-        self.margin_bottom = 2.45 * cm
-        self.margin_left = 1.9 * cm
-        self.margin_right = 1.9 * cm
+        # 按模板坐标下移版心，同时保持分页稳定
+        self.margin_top = 4.35 * cm
+        self.margin_bottom = 1.9 * cm
+        # 模板版心更窄，正文起点更靠内
+        self.margin_left = 3.0 * cm
+        self.margin_right = 3.0 * cm
 
         self.doc = BaseDocTemplate(
             output_path,
@@ -96,22 +106,47 @@ class PDFReportGeneratorV4:
     def _register_chinese_fonts(self):
         """注册中文字体（兼容 macOS / Linux / 手动字体路径）。"""
         if PDFReportGeneratorV4._font_cache:
-            self.font_regular, self.font_bold = PDFReportGeneratorV4._font_cache
+            if len(PDFReportGeneratorV4._font_cache) == 3:
+                self.font_regular, self.font_bold, self.font_small = PDFReportGeneratorV4._font_cache
+            else:
+                self.font_regular, self.font_bold = PDFReportGeneratorV4._font_cache
+                self.font_small = self.font_regular
             return
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        template_font_dir = os.path.join(base_dir, 'fonts', 'template')
+        template_regular = os.path.join(template_font_dir, 'MicrosoftYaHei-Regular.ttf')
+        template_bold = os.path.join(template_font_dir, 'MicrosoftYaHei-Bold.ttf')
+        office_font_dir = os.path.expanduser(
+            '~/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Microsoft YaHei UI'
+        )
+        office_regular = os.path.join(office_font_dir, '48046837801.ttf')
+        office_bold = os.path.join(office_font_dir, '47005771285.ttf')
 
         env_font = os.getenv('PDF_FONT_PATH', '').strip()
         env_bold_font = os.getenv('PDF_FONT_BOLD_PATH', '').strip()
         font_candidates = [
             # 允许通过环境变量手动指定字体
             (env_font, env_bold_font or env_font, None, None, 'ENV_FONT'),
+            # Office 云字体缓存（完整字形，优先保证 A-E 等级不丢字）
+            (office_regular, office_bold, None, None, 'Office-YaHeiUI'),
+            # 项目内模板字体（从案例模板提取，作为高相似度回退）
+            (template_regular, template_bold, None, None, 'Template-YaHei'),
+            # Microsoft YaHei（模板同款优先）
+            (os.path.expanduser('~/Library/Fonts/Microsoft YaHei.ttf'),
+             os.path.expanduser('~/Library/Fonts/Microsoft YaHei Bold.ttf'), None, None, 'YaHei-User'),
+            ('/Library/Fonts/Microsoft YaHei.ttf', '/Library/Fonts/Microsoft YaHei Bold.ttf', None, None, 'YaHei-Library'),
+            ('/Library/Fonts/msyh.ttf', '/Library/Fonts/msyhbd.ttf', None, None, 'YaHei-msyh'),
+            (r'C:\Windows\Fonts\msyh.ttc', r'C:\Windows\Fonts\msyhbd.ttc', 0, 0, 'YaHei-Windows'),
+            (r'C:\Windows\Fonts\msyh.ttf', r'C:\Windows\Fonts\msyhbd.ttf', None, None, 'YaHei-Windows-ttf'),
             # Linux 常见 Noto 字体
             ('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc', 0, 0, 'NotoSansCJK'),
             ('/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf', '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf', None, None, 'NotoSansCJKsc'),
             ('/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc', '/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc', 0, 0, 'NotoSansCJK-ttf'),
-            # macOS
+            # macOS 备用（Songti 支持真实粗体，最后再退回 STHeiti）
+            ('/System/Library/Fonts/Supplemental/Songti.ttc', '/System/Library/Fonts/Supplemental/Songti.ttc', 6, 1, 'Songti-RegularBold'),
+            # macOS 兜底
             ('/System/Library/Fonts/STHeiti Medium.ttc', '/System/Library/Fonts/STHeiti Medium.ttc', 0, 0, 'STHeiti'),
-            ('/System/Library/Fonts/PingFang.ttc', '/System/Library/Fonts/PingFang.ttc', 1, 1, 'PingFang'),
-            ('/System/Library/Fonts/Hiragino Sans GB.ttc', '/System/Library/Fonts/Hiragino Sans GB.ttc', 0, 0, 'Hiragino'),
         ]
 
         def _register_font(font_name, path, sub_idx):
@@ -133,7 +168,9 @@ class PDFReportGeneratorV4:
                 _register_font('CN-Bold', bold_path, bold_idx)
                 self.font_regular = 'CN-Regular'
                 self.font_bold = 'CN-Bold'
-                PDFReportGeneratorV4._font_cache = (self.font_regular, self.font_bold)
+                # 小号文字统一沿用主中文字体，避免模板子集字体缺字
+                self.font_small = self.font_regular
+                PDFReportGeneratorV4._font_cache = (self.font_regular, self.font_bold, self.font_small)
                 print(f"✅ 成功注册字体: {label}")
                 return
             except Exception:
@@ -141,7 +178,8 @@ class PDFReportGeneratorV4:
 
         self.font_regular = 'Helvetica'
         self.font_bold = 'Helvetica-Bold'
-        PDFReportGeneratorV4._font_cache = (self.font_regular, self.font_bold)
+        self.font_small = self.font_regular
+        PDFReportGeneratorV4._font_cache = (self.font_regular, self.font_bold, self.font_small)
         print('⚠️ 中文字体注册失败，使用内置字体')
 
     def _setup_styles(self):
@@ -149,7 +187,7 @@ class PDFReportGeneratorV4:
         self.styles.add(ParagraphStyle(
             name='V4TitleMain',
             fontName=self.font_bold,
-            fontSize=22,
+            fontSize=21.96,
             leading=28,
             alignment=TA_CENTER,
             textColor=colors.black,
@@ -158,47 +196,61 @@ class PDFReportGeneratorV4:
         self.styles.add(ParagraphStyle(
             name='V4PartTitleCenter',
             fontName=self.font_bold,
-            fontSize=16,
-            leading=24,
+            fontSize=18,
+            leading=26,
             alignment=TA_CENTER,
             textColor=COLOR_ORANGE,
             spaceBefore=8,
-            spaceAfter=14,
+            spaceAfter=16,
         ))
         self.styles.add(ParagraphStyle(
             name='V4SubHeadingOrange',
             fontName=self.font_bold,
-            fontSize=15,
-            leading=20,
+            fontSize=15.96,
+            leading=22,
             alignment=TA_LEFT,
             textColor=COLOR_ORANGE,
             spaceBefore=10,
             spaceAfter=8,
+            wordWrap='CJK',
+        ))
+        self.styles.add(ParagraphStyle(
+            name='V4SubHeadingOrangeCompact',
+            parent=self.styles['V4SubHeadingOrange'],
+            fontSize=15.0,
+            leading=20.5,
+            spaceBefore=2,
+            spaceAfter=4,
         ))
         self.styles.add(ParagraphStyle(
             name='V4RankLine',
             fontName=self.font_bold,
-            fontSize=14.5,
-            leading=21,
+            fontSize=15,
+            leading=20,
             textColor=colors.black,
             spaceAfter=4,
+            wordWrap='CJK',
         ))
         self.styles.add(ParagraphStyle(
             name='V4Body',
             fontName=self.font_regular,
-            fontSize=10.8,
-            leading=19,
-            alignment=TA_JUSTIFY,
+            fontSize=14.04,
+            leading=22.5,
+            alignment=TA_LEFT,
             textColor=COLOR_TEXT,
-            spaceAfter=3,
+            spaceAfter=2,
+            wordWrap='CJK',
+            splitLongWords=False,
+            allowWidows=0,
+            allowOrphans=0,
         ))
         self.styles.add(ParagraphStyle(
             name='V4BodyIndent',
             parent=self.styles['V4Body'],
-            fontSize=11.4,
-            leading=20,
-            firstLineIndent=16,
-            spaceAfter=6,
+            fontSize=15.0,
+            leading=31.2,
+            firstLineIndent=30,
+            spaceAfter=0,
         ))
         self.styles.add(ParagraphStyle(
             name='V4BodyBold',
@@ -207,59 +259,88 @@ class PDFReportGeneratorV4:
         ))
         self.styles.add(ParagraphStyle(
             name='V4Small',
-            fontName=self.font_regular,
-            fontSize=9.5,
-            leading=14,
+            fontName=self.font_small,
+            fontSize=10.56,
+            leading=15.84,
             alignment=TA_LEFT,
             textColor=COLOR_TEXT_SUB,
             spaceAfter=2,
+            wordWrap='CJK',
         ))
         self.styles.add(ParagraphStyle(
-            name='V4SectionOrangeCenter',
+            name='V4SectionOrangeCenterLarge',
             fontName=self.font_bold,
-            fontSize=17,
+            fontSize=18,
             leading=26,
             alignment=TA_CENTER,
             textColor=COLOR_ORANGE,
             spaceAfter=10,
         ))
         self.styles.add(ParagraphStyle(
+            name='V4SectionOrangeCenterMedium',
+            fontName=self.font_bold,
+            fontSize=15.0,
+            leading=21.5,
+            alignment=TA_CENTER,
+            textColor=COLOR_ORANGE,
+            spaceAfter=8,
+        ))
+        self.styles.add(ParagraphStyle(
             name='V4GroupHeading',
             fontName=self.font_bold,
-            fontSize=15,
-            leading=20,
+            fontSize=15.96,
+            leading=22,
             textColor=COLOR_ORANGE,
             spaceBefore=10,
             spaceAfter=4,
+            wordWrap='CJK',
         ))
         self.styles.add(ParagraphStyle(
             name='V4GroupDesc',
             fontName=self.font_bold,
-            fontSize=10,
-            leading=14,
+            fontSize=10.56,
+            leading=14.8,
             textColor=COLOR_ORANGE,
             spaceAfter=6,
+            wordWrap='CJK',
         ))
         self.styles.add(ParagraphStyle(
             name='V4AbilityTag',
             fontName=self.font_bold,
-            fontSize=13,
-            leading=18,
+            fontSize=14.04,
+            leading=20,
             textColor=colors.black,
             backColor=COLOR_YELLOW,
             leftIndent=0,
             rightIndent=0,
-            spaceBefore=8,
-            spaceAfter=5,
+            spaceBefore=5,
+            spaceAfter=3,
         ))
         self.styles.add(ParagraphStyle(
             name='V4Note',
             fontName=self.font_bold,
-            fontSize=10.4,
-            leading=16,
+            fontSize=14.04,
+            leading=22.5,
             textColor=COLOR_TEXT,
-            spaceBefore=8,
-            spaceAfter=5,
+            spaceBefore=2,
+            spaceAfter=2,
+            wordWrap='CJK',
+        ))
+        self.styles.add(ParagraphStyle(
+            name='V4ActionBody',
+            parent=self.styles['V4Body'],
+            leading=20.2,
+            spaceAfter=1,
+        ))
+        self.styles.add(ParagraphStyle(
+            name='V4ActionBodyBold',
+            parent=self.styles['V4ActionBody'],
+            fontName=self.font_bold,
+        ))
+        self.styles.add(ParagraphStyle(
+            name='V4ActionNote',
+            parent=self.styles['V4ActionBodyBold'],
+            leading=19.8,
         ))
 
     def _format_report_date(self, dt_obj):
@@ -269,6 +350,9 @@ class PDFReportGeneratorV4:
 
     def _set_report_date_now(self):
         self.report_date_text = self._format_report_date(datetime.now())
+
+    def _inline_bold(self, text):
+        return f"<font name='{self.font_bold}'>{escape(text)}</font>"
 
     def _draw_page_header_footer(self, canvas, doc):
         """绘制固定页眉页脚（与参考模板一致）"""
@@ -295,17 +379,22 @@ class PDFReportGeneratorV4:
 
         # 页脚日期（模板位置：右下角、footer上方）
         canvas.setFillColor(COLOR_TEXT_SUB)
-        canvas.setFont(self.font_regular, 8.5)
+        canvas.setFont(self.font_small, 8.5)
         canvas.drawRightString(self.page_width - self.margin_right, 1.95 * cm, self.report_date_text)
 
         canvas.restoreState()
 
     def generate_radar_chart_v2(self, ability_scores):
         """生成雷达图（蓝色填充，接近参考模板）"""
-        plt.rcParams['font.sans-serif'] = ['PingFang SC', 'STHeiti', 'Arial Unicode MS', 'SimHei', 'DejaVu Sans']
+        plt.rcParams['font.sans-serif'] = [
+            'Microsoft YaHei', 'Microsoft YaHei UI',
+            'PingFang SC', 'STHeiti', 'Noto Sans CJK SC',
+            'Arial Unicode MS', 'SimHei', 'DejaVu Sans'
+        ]
         plt.rcParams['axes.unicode_minus'] = False
 
-        abilities = list(ability_scores.keys())
+        # 固定雷达图能力顺序，避免字典顺序导致的错位
+        abilities = [a for a in RADAR_ABILITY_ORDER if a in ability_scores]
         max_scores = {
             '执行力': 8, '协调力': 8, '优化力': 8,
             '统筹力': 10, '预见力': 10, '业务力': 10,
@@ -353,16 +442,16 @@ class PDFReportGeneratorV4:
         ]))
         return line
 
-    def _build_score_table(self, ability_scores):
+    def _build_score_table(self, ability_scores, ability_grades):
         left = ['执行力', '协调力', '优化力', '统筹力', '预见力']
         right = ['业务力', '财务力', '领导力', '决策力']
         rows = max(len(left), len(right))
 
         score_style = ParagraphStyle(
             'V4ScoreItem',
-            parent=self.styles['V4BodyBold'],
-            fontSize=12,
-            leading=18,
+            parent=self.styles['V4Body'],
+            fontSize=14.04,
+            leading=22.5,
             spaceAfter=0,
         )
 
@@ -372,10 +461,12 @@ class PDFReportGeneratorV4:
             right_txt = ''
             if i < len(left):
                 a = left[i]
-                left_txt = f"<b>【{escape(a)}】</b> {ability_scores.get(a, 0):.2f}"
+                grade = ability_grades.get(a, self._grade_for_score(a, ability_scores.get(a, 0)))
+                left_txt = f"【{escape(a)}】 {escape(grade)}"
             if i < len(right):
                 a = right[i]
-                right_txt = f"<b>【{escape(a)}】</b> {ability_scores.get(a, 0):.2f}"
+                grade = ability_grades.get(a, self._grade_for_score(a, ability_scores.get(a, 0)))
+                right_txt = f"【{escape(a)}】 {escape(grade)}"
             data.append([
                 Paragraph(left_txt, score_style) if left_txt else Paragraph('', score_style),
                 Paragraph(right_txt, score_style) if right_txt else Paragraph('', score_style),
@@ -394,21 +485,46 @@ class PDFReportGeneratorV4:
     def _ability_desc(self, corpus, ability, grade):
         return corpus.get('ability', {}).get(ability, {}).get(grade, {}).get('description', '')
 
+    def _grade_for_score(self, ability, score):
+        """按能力满分区间返回 A-E 等级（与主逻辑一致）。"""
+        max_scores = {
+            '执行力': 8, '协调力': 8, '优化力': 8,
+            '统筹力': 10, '预见力': 10, '业务力': 10,
+            '财务力': 12, '领导力': 12, '决策力': 12,
+        }
+        thresholds = {
+            8: {'A': (7.2, 8.0), 'B': (6.4, 7.1), 'C': (5.6, 6.3), 'D': (4.8, 5.5), 'E': (0, 4.7)},
+            10: {'A': (9.0, 10.0), 'B': (8.0, 8.9), 'C': (7.0, 7.9), 'D': (6.0, 6.9), 'E': (0, 5.9)},
+            12: {'A': (10.8, 12.0), 'B': (9.6, 10.7), 'C': (8.4, 9.5), 'D': (7.2, 8.3), 'E': (0, 7.1)},
+        }
+
+        max_score = max_scores.get(ability, 10)
+        score = round(float(score), 1)
+        for grade, (min_score, max_score) in thresholds[max_score].items():
+            if min_score <= score <= max_score:
+                return grade
+        return 'E'
+
     def _build_dimension_table(self, abilities, ability_grades, corpus):
         content_width = self.page_width - self.margin_left - self.margin_right
 
         head_style = ParagraphStyle(
             'V4TableHead',
             parent=self.styles['V4BodyBold'],
-            fontSize=12,
-            leading=16,
+            fontSize=14.04,
+            leading=22.5,
         )
         cell_style = ParagraphStyle(
             'V4TableCell',
             parent=self.styles['V4Body'],
-            fontSize=11,
-            leading=18,
+            fontSize=14.04,
+            leading=22.5,
             spaceAfter=0,
+        )
+        cell_style_bold = ParagraphStyle(
+            'V4TableCellBold',
+            parent=cell_style,
+            fontName=self.font_bold,
         )
 
         data = [
@@ -419,9 +535,9 @@ class PDFReportGeneratorV4:
             grade = ability_grades.get(ability, 'E')
             grade_label = GRADE_LABELS.get(grade, '')
             desc = self._ability_desc(corpus, ability, grade)
-            text = f"<b>{escape(grade)} {escape(grade_label)}</b> {escape(desc)}"
+            text = f"{self._inline_bold(f'{grade} {grade_label}')} {escape(desc)}"
             data.append([
-                Paragraph(f"<b>{escape(ability)}</b>", cell_style),
+                Paragraph(escape(ability), cell_style_bold),
                 Paragraph(text, cell_style),
             ])
 
@@ -437,46 +553,33 @@ class PDFReportGeneratorV4:
         ]))
         return table
 
-    def _split_for_carryover(self, text, tail_len=18):
-        """将段落末尾切一小段放到下一页，贴近参考模板的跨页效果。"""
-        if not text or len(text) <= tail_len + 20:
-            return text, ''
-        head = text[:-tail_len]
-        tail = text[-tail_len:]
-        split_idx = max(head.rfind('，'), head.rfind('。'), head.rfind('；'))
-        if split_idx > 30:
-            return head[:split_idx + 1], head[split_idx + 1:] + tail
-        return head, tail
-
     def _render_rank_section(self, rank, rank_text):
+        self.story.append(Spacer(1, 0.28 * cm))
         self.story.append(Paragraph('九段总助测评结果报告', self.styles['V4TitleMain']))
         self.story.append(self._build_underline())
         self.story.append(Spacer(1, 0.35 * cm))
 
         self.story.append(Paragraph('第一部分：核心发现与总览', self.styles['V4PartTitleCenter']))
         self.story.append(Paragraph('1、综合段位：', self.styles['V4SubHeadingOrange']))
-        self.story.append(Paragraph(f'您的当前段位: {escape(rank)}', self.styles['V4RankLine']))
+        self.story.append(Paragraph(f'您的当前段位：{escape(rank)}', self.styles['V4RankLine']))
+        self.story.append(Spacer(1, 0.35 * cm))
 
         lines = [line.strip() for line in rank_text.split('\n') if line.strip()]
-        carryover = ''
-        for idx, line in enumerate(lines):
+        for line in lines:
             if line.startswith('段位释义：'):
                 remain = line.split('：', 1)[1].strip() if '：' in line else ''
                 if remain:
-                    self.story.append(Paragraph(f"<b>段位释义：</b> {escape(remain)}", self.styles['V4BodyIndent']))
+                    self.story.append(Paragraph(
+                        f"{self._inline_bold('段位释义：')} {escape(remain)}",
+                        self.styles['V4BodyIndent']
+                    ))
                 else:
-                    self.story.append(Paragraph('<b>段位释义：</b>', self.styles['V4BodyIndent']))
+                    self.story.append(Paragraph(self._inline_bold('段位释义：'), self.styles['V4BodyIndent']))
             else:
-                text_to_render = line
-                if idx == len(lines) - 1:
-                    text_to_render, carryover = self._split_for_carryover(line)
-                self.story.append(Paragraph(escape(text_to_render), self.styles['V4BodyIndent']))
-        return carryover
+                self.story.append(Paragraph(escape(line), self.styles['V4BodyIndent']))
 
-    def _render_radar_section(self, ability_scores, carryover=''):
-        if carryover:
-            self.story.append(Paragraph(escape(carryover), self.styles['V4BodyIndent']))
-            self.story.append(Spacer(1, 0.1 * cm))
+    def _render_radar_section(self, ability_scores, ability_grades):
+        self.story.append(Spacer(1, 0.18 * cm))
         self.story.append(Paragraph('2、核心能力雷达图：', self.styles['V4SubHeadingOrange']))
 
         chart_buf = self.generate_radar_chart_v2(ability_scores)
@@ -485,16 +588,17 @@ class PDFReportGeneratorV4:
         self.story.append(chart)
         self.story.append(Spacer(1, 0.18 * cm))
 
-        self.story.append(self._build_score_table(ability_scores))
+        self.story.append(self._build_score_table(ability_scores, ability_grades))
         self.story.append(Spacer(1, 0.15 * cm))
 
-        interp = '解读：一眼看清您的能力结构。面积越大、越均衡，说明能力结构越全面；突出的尖角是您的核心优势，凹陷的角落是您的待发展区。'
-        self.story.append(Paragraph(interp, self.styles['V4BodyBold']))
+        interp = f"{self._inline_bold('解读：')}一眼看清您的能力结构。面积越大、越均衡，说明能力结构越全面；突出的尖角是您的核心优势，凹陷的角落是您的待发展区。"
+        self.story.append(Paragraph(interp, self.styles['V4Body']))
 
     def _render_section_two(self, ability_grades, corpus):
         self.story.append(PageBreak())
-        self.story.append(Paragraph('第二部分：能力维度深度解析', self.styles['V4SectionOrangeCenter']))
-        self.story.append(Paragraph('本部分将您的 9 项核心能力划分为三个层级，以便您更清晰地定位自己的发展阶段。', self.styles['V4Small']))
+        self.story.append(Spacer(1, 0.22 * cm))
+        self.story.append(Paragraph('第二部分：能力维度深度解析', self.styles['V4SectionOrangeCenterLarge']))
+        self.story.append(Paragraph('本部分将您的9项核心能力划分为三个层级，以便您更清晰地定位自己的发展阶段。', self.styles['V4Small']))
         self.story.append(Spacer(1, 0.2 * cm))
 
         groups = [
@@ -513,9 +617,11 @@ class PDFReportGeneratorV4:
             self.story.append(KeepTogether(block))
 
     def _render_section_three(self, ability_grades, rank, corpus, advice_func):
+        # 第三部分固定从新页开始（与第一、二部分一致）
         self.story.append(PageBreak())
-        self.story.append(Paragraph('第三部分：个性化发展行动计划', self.styles['V4SectionOrangeCenter']))
-        self.story.append(Paragraph('基于您的测评结果，我们为您量身定制了以下行动建议：', self.styles['V4Small']))
+        self.story.append(Spacer(1, 0.12 * cm))
+        self.story.append(Paragraph('第三部分：个性化发展行动计划', self.styles['V4SectionOrangeCenterMedium']))
+        self.story.append(Paragraph('基于您的测评结果，我们为您量身定制了以下行动建议。', self.styles['V4Small']))
 
         action_meta = corpus.get('action', {}).get('__meta__', {})
         development_logic = action_meta.get('development_logic') or '发展逻辑：系统化补课，将能力短板提升至及格线以上，消除职业发展的“致命伤”。'
@@ -530,32 +636,35 @@ class PDFReportGeneratorV4:
         else:
             for ability in advantages:
                 grade = ability_grades[ability]
-                self.story.append(Paragraph(escape(ability), self.styles['V4AbilityTag']))
+                block = [Paragraph(escape(ability), self.styles['V4AbilityTag'])]
                 advices = advice_func(corpus.get('action', {}).get(ability, {}), rank, ability, grade, True)
                 if advices:
                     for line in advices:
-                        self.story.append(Paragraph(escape(line), self.styles['V4Body']))
+                        block.append(Paragraph(escape(line), self.styles['V4ActionBody']))
                 else:
-                    self.story.append(Paragraph('继续保持并将优势转化为团队影响力。', self.styles['V4Body']))
+                    block.append(Paragraph('继续保持并将优势转化为团队影响力。', self.styles['V4ActionBody']))
+                # 第三部分按自然流式排版，避免末页只剩零碎段落
+                self.story.extend(block)
 
         self.story.append(Spacer(1, 0.25 * cm))
 
         # 2. 重点改善区
         self.story.append(Paragraph('2、重点改善区', self.styles['V4SubHeadingOrange']))
-        self.story.append(Paragraph(escape(development_logic), self.styles['V4BodyBold']))
+        self.story.append(Paragraph(escape(development_logic), self.styles['V4ActionBodyBold']))
 
         improvements = [a for a in ABILITY_ORDER if ability_grades.get(a) in ['D', 'E']]
 
         if not improvements:
-            self.story.append(Paragraph('无急需改善项。', self.styles['V4Body']))
+            self.story.append(Paragraph('无急需改善项。', self.styles['V4ActionBody']))
         else:
             for ability in improvements:
                 grade = ability_grades[ability]
-                self.story.append(Paragraph(escape(ability), self.styles['V4AbilityTag']))
+                block = [Paragraph(escape(ability), self.styles['V4AbilityTag'])]
 
                 lines = advice_func(corpus.get('action', {}).get(ability, {}), rank, ability, grade, False)
                 if not lines:
-                    self.story.append(Paragraph('核心任务：进行针对性训练。', self.styles['V4BodyBold']))
+                    block.append(Paragraph('核心任务：进行针对性训练。', self.styles['V4ActionBodyBold']))
+                    self.story.extend(block)
                     continue
 
                 core_lines = [x for x in lines if x.startswith('核心任务：')]
@@ -563,21 +672,21 @@ class PDFReportGeneratorV4:
 
                 if core_lines:
                     for line in core_lines:
-                        self.story.append(Paragraph(escape(line), self.styles['V4BodyBold']))
+                        block.append(Paragraph(escape(line), self.styles['V4ActionBodyBold']))
 
                 if step_lines:
-                    self.story.append(Paragraph('行动步骤：', self.styles['V4BodyBold']))
+                    block.append(Paragraph('行动步骤：', self.styles['V4ActionBodyBold']))
                     for line in step_lines:
-                        self.story.append(Paragraph(escape(line), self.styles['V4Body']))
+                        block.append(Paragraph(escape(line), self.styles['V4ActionBody']))
+
+                self.story.extend(block)
 
         if note_text:
-            self.story.append(Spacer(1, 0.2 * cm))
-            self.story.append(Paragraph(escape(note_text), self.styles['V4Note']))
+            self.story.append(Paragraph(escape(note_text), self.styles['V4ActionNote']))
 
-        # 3. 核心诊断与发展建议（参考模板为独立页）
-        self.story.append(PageBreak())
-        self.story.append(Paragraph('3、核心诊断与发展建议', self.styles['V4SubHeadingOrange']))
-        self.story.append(Paragraph('请把个人情况、当前困惑或期待发给老师进行详细诊断。', self.styles['V4BodyBold']))
+        # 3. 核心诊断与发展建议（紧接上一段，完全自然续排）
+        self.story.append(Paragraph('3、核心诊断与发展建议', self.styles['V4SubHeadingOrangeCompact']))
+        self.story.append(Paragraph('请把个人情况、当前困惑或期待发给老师进行详细诊断。', self.styles['V4ActionBodyBold']))
 
     def build(self, user_info, total_score, rank, ability_scores, ability_grades, rank_text, corpus, advice_func):
         """构建PDF文档"""
@@ -595,9 +704,9 @@ class PDFReportGeneratorV4:
         self.doc.addPageTemplates([template])
 
         # 第一部分
-        carryover = self._render_rank_section(rank, rank_text)
-        self.story.append(PageBreak())
-        self._render_radar_section(ability_scores, carryover)
+        self._render_rank_section(rank, rank_text)
+        self.story.append(CondPageBreak(13.6 * cm))
+        self._render_radar_section(ability_scores, ability_grades)
 
         # 第二部分
         self._render_section_two(ability_grades, corpus)
