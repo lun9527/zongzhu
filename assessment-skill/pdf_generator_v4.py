@@ -35,6 +35,7 @@ from reportlab.lib.colors import HexColor
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import numpy as np
 
 
@@ -71,6 +72,7 @@ RADAR_ABILITY_ORDER = [
 class PDFReportGeneratorV4:
     """参考模板风格PDF生成器"""
     _font_cache = None
+    _mpl_font_path_cache = None
 
     def __init__(self, output_path):
         self.output_path = output_path
@@ -111,6 +113,7 @@ class PDFReportGeneratorV4:
             else:
                 self.font_regular, self.font_bold = PDFReportGeneratorV4._font_cache
                 self.font_small = self.font_regular
+            self.mpl_font_path = PDFReportGeneratorV4._mpl_font_path_cache
             return
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -190,7 +193,9 @@ class PDFReportGeneratorV4:
                 self.font_bold = 'CN-Bold'
                 # 小号文字统一沿用主中文字体，避免模板子集字体缺字
                 self.font_small = self.font_regular
+                self.mpl_font_path = regular_path
                 PDFReportGeneratorV4._font_cache = (self.font_regular, self.font_bold, self.font_small)
+                PDFReportGeneratorV4._mpl_font_path_cache = self.mpl_font_path
                 print(f"✅ 成功注册字体: {label}")
                 return
             except Exception:
@@ -199,7 +204,9 @@ class PDFReportGeneratorV4:
         self.font_regular = 'Helvetica'
         self.font_bold = 'Helvetica-Bold'
         self.font_small = self.font_regular
+        self.mpl_font_path = None
         PDFReportGeneratorV4._font_cache = (self.font_regular, self.font_bold, self.font_small)
+        PDFReportGeneratorV4._mpl_font_path_cache = self.mpl_font_path
         print('⚠️ 中文字体注册失败，使用内置字体')
 
     def _setup_styles(self):
@@ -412,6 +419,13 @@ class PDFReportGeneratorV4:
             'Arial Unicode MS', 'SimHei', 'DejaVu Sans'
         ]
         plt.rcParams['axes.unicode_minus'] = False
+        radar_font_prop = None
+        if self.mpl_font_path and os.path.exists(self.mpl_font_path):
+            try:
+                fm.fontManager.addfont(self.mpl_font_path)
+                radar_font_prop = fm.FontProperties(fname=self.mpl_font_path)
+            except Exception:
+                radar_font_prop = None
 
         # 固定雷达图能力顺序，避免字典顺序导致的错位
         abilities = [a for a in RADAR_ABILITY_ORDER if a in ability_scores]
@@ -436,7 +450,10 @@ class PDFReportGeneratorV4:
         ax.fill(angles, values, color='#7fb6f7', alpha=0.45)
 
         ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels, fontsize=9.2, color='#666666')
+        xt = ax.set_xticklabels(labels, fontsize=9.2, color='#666666')
+        if radar_font_prop is not None:
+            for t in xt:
+                t.set_fontproperties(radar_font_prop)
         ax.set_ylim(0, 1)
         ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
         ax.set_yticklabels(['20%', '40%', '60%', '80%', '100%'], fontsize=7.4, color='#b0b0b0')
@@ -446,7 +463,10 @@ class PDFReportGeneratorV4:
         ax.spines['polar'].set_linewidth(0.8)
 
         ax.plot([], [], marker='o', color='#4a97f2', linestyle='None', label='得分')
-        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.14), frameon=False, fontsize=8)
+        if radar_font_prop is not None:
+            ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.14), frameon=False, fontsize=8, prop=radar_font_prop)
+        else:
+            ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.14), frameon=False, fontsize=8)
 
         buf = BytesIO()
         plt.savefig(buf, format='png', dpi=170, bbox_inches='tight', facecolor='white')
