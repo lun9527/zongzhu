@@ -2,7 +2,38 @@
 
 你当前场景（小规模、希望快上线）最推荐：
 - GitHub 托管代码
-- Render 一键部署（自动分配 `*.onrender.com` 域名 + 自动 HTTPS）
+- Hugging Face Spaces（Docker，自动分配 `*.hf.space` 域名 + 自动 HTTPS）
+
+## 0. 免付费门槛方案（推荐）
+
+如果 Render 页面提示付费，建议切换到 Hugging Face Spaces：
+
+1. 打开：https://huggingface.co/new-space
+2. 填写：
+   - `Owner`：你的 HF 账号
+   - `Space name`：`assessment-report`
+   - `License`：任选（如 `MIT`）
+   - `SDK`：`Docker`
+   - `Visibility`：`Public`（免费）
+3. 本地执行（将当前仓库推送到 Space）：
+   ```bash
+   cd /Users/yanzhanglun/Desktop/测评报告
+   git remote add hf https://huggingface.co/spaces/<你的HF用户名>/assessment-report
+   git push hf main
+   ```
+4. 在 Space 的 `Settings -> Variables` 添加：
+   - `MAX_CONTENT_LENGTH_MB=20`
+   - `JOB_RETENTION_HOURS=24`
+   - `MAX_KEPT_JOBS=300`
+   - `GUNICORN_WORKERS=1`
+   - `GUNICORN_THREADS=2`
+   - `GUNICORN_TIMEOUT=300`
+5. 等待构建完成后访问：
+   - `https://<owner>-assessment-report.hf.space`
+
+说明：
+- 项目已支持读取平台 `PORT` 环境变量，无需额外改代码。
+- 适合你当前小规模给朋友使用的场景。
 
 ## 1. 最省事流程（推荐）
 
@@ -66,4 +97,3 @@ cd /Users/yanzhanglun/Desktop/测评报告
 
 可以继续走 API 自动化，但需要额外提供平台 API Key（比如 Render API Key）。
 我拿到后可以继续帮你做“推送后自动创建服务并返回域名”的全链路脚本。
-
