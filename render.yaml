@@ -2,6 +2,7 @@ services:
   - type: web
     name: assessment-report
     runtime: docker
+    plan: free
     autoDeploy: true
     healthCheckPath: /healthz
     envVars:
