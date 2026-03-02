@@ -1,3 +1,10 @@
+---
+title: zongzhu
+sdk: docker
+app_port: 8080
+pinned: false
+---
+
 # 九段总助测评报告系统
 
 一个基于 Excel 上传、按三份 TXT 语料执行判读逻辑、批量生成 PDF 报告的 Web 系统。
@@ -170,4 +177,3 @@ cd /Users/yanzhanglun/Desktop/测评报告
 python3 -m unittest discover -s assessment-skill/tests -q
 python3 -m py_compile app.py assessment-skill/main.py assessment-skill/pdf_generator_v4.py wsgi.py
 ```
-
