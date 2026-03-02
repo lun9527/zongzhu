@@ -117,6 +117,12 @@ class PDFReportGeneratorV4:
         template_font_dir = os.path.join(base_dir, 'fonts', 'template')
         template_regular = os.path.join(template_font_dir, 'MicrosoftYaHei-Regular.ttf')
         template_bold = os.path.join(template_font_dir, 'MicrosoftYaHei-Bold.ttf')
+        # 历史模板里曾存在精简子集字体（体积很小，线上会出现缺字/方框）。
+        # 当检测到子集字体时，降低其优先级，优先使用完整字形字体。
+        template_is_subset = (
+            os.path.exists(template_regular)
+            and os.path.getsize(template_regular) < 2 * 1024 * 1024
+        )
         office_font_dir = os.path.expanduser(
             '~/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Microsoft YaHei UI'
         )
@@ -125,13 +131,25 @@ class PDFReportGeneratorV4:
 
         env_font = os.getenv('PDF_FONT_PATH', '').strip()
         env_bold_font = os.getenv('PDF_FONT_BOLD_PATH', '').strip()
+        preferred_template_candidates = []
+        subset_template_candidates = []
+        if os.path.exists(template_regular):
+            if template_is_subset:
+                subset_template_candidates.append(
+                    (template_regular, template_bold, None, None, 'Template-YaHei-Subset')
+                )
+            else:
+                preferred_template_candidates.append(
+                    (template_regular, template_bold, None, None, 'Template-YaHei')
+                )
+
         font_candidates = [
             # 允许通过环境变量手动指定字体
             (env_font, env_bold_font or env_font, None, None, 'ENV_FONT'),
             # Office 云字体缓存（完整字形，优先保证 A-E 等级不丢字）
             (office_regular, office_bold, None, None, 'Office-YaHeiUI'),
-            # 项目内模板字体（从案例模板提取，作为高相似度回退）
-            (template_regular, template_bold, None, None, 'Template-YaHei'),
+            # 项目内模板字体（完整字形时优先）
+            *preferred_template_candidates,
             # Microsoft YaHei（模板同款优先）
             (os.path.expanduser('~/Library/Fonts/Microsoft YaHei.ttf'),
              os.path.expanduser('~/Library/Fonts/Microsoft YaHei Bold.ttf'), None, None, 'YaHei-User'),
@@ -143,6 +161,8 @@ class PDFReportGeneratorV4:
             ('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc', 0, 0, 'NotoSansCJK'),
             ('/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf', '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf', None, None, 'NotoSansCJKsc'),
             ('/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc', '/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc', 0, 0, 'NotoSansCJK-ttf'),
+            # 若模板字体是精简子集，则仅作兜底
+            *subset_template_candidates,
             # macOS 备用（Songti 支持真实粗体，最后再退回 STHeiti）
             ('/System/Library/Fonts/Supplemental/Songti.ttc', '/System/Library/Fonts/Supplemental/Songti.ttc', 6, 1, 'Songti-RegularBold'),
             # macOS 兜底
