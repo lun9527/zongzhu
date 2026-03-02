@@ -74,11 +74,14 @@ def check_excel_columns(excel_path):
 
 def build_report_files(job_id, generated_files):
     report_files = []
-    for file_path in generated_files:
+    for index, file_path in enumerate(generated_files):
         output_name = os.path.basename(file_path)
         report_files.append({
+            'index': index,
             'name': output_name,
-            'url': f'/download/{job_id}/{quote(output_name)}',
+            # 使用索引下载路由，避免中文/emoji 文件名在 URL 中导致浏览器兼容问题
+            'url': f'/jobs/{job_id}/file/{index}',
+            'legacy_url': f'/download/{job_id}/{quote(output_name)}',
         })
     return report_files
 
@@ -254,7 +257,8 @@ def get_valid_job(job_id):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # 通过查询参数控制静态资源版本，避免浏览器使用旧缓存导致前端逻辑不一致
+    return render_template('index.html', asset_version=int(datetime.now().timestamp()))
 
 
 @app.route('/healthz')
@@ -334,6 +338,33 @@ def get_job_files(job_id):
         'error': '任务尚未完成',
         'status': status,
     }), 409
+
+
+@app.route('/jobs/<job_id>/file/<int:file_index>')
+def download_job_file(job_id, file_index):
+    job, err = get_valid_job(job_id)
+    if err:
+        return err
+
+    if job['status'] != 'success':
+        return jsonify({'error': '任务尚未完成，无法下载文件'}), 409
+
+    files = job.get('files') or []
+    if file_index < 0 or file_index >= len(files):
+        return jsonify({'error': '文件索引不存在'}), 404
+
+    filename = files[file_index].get('name', '')
+    output_dir = Path(job['output_dir'])
+    if not filename:
+        return jsonify({'error': '文件名无效'}), 404
+    if not output_dir.exists():
+        return jsonify({'error': '输出目录不存在或已过期'}), 404
+
+    file_path = output_dir / filename
+    if not file_path.exists():
+        return jsonify({'error': '文件不存在'}), 404
+
+    return send_from_directory(str(output_dir), filename, as_attachment=True)
 
 
 @app.route('/jobs/<job_id>/archive')

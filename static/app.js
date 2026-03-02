@@ -1,4 +1,6 @@
 const POLL_INTERVAL_MS = 1000;
+const MAX_POLL_ERROR_RETRIES = 5;
+const REQUEST_TIMEOUT_MS = 30000;
 
 const elements = {
     stateUpload: document.getElementById('state-upload'),
@@ -31,6 +33,7 @@ const appState = {
     zipUrl: null,
     pollTimer: null,
     isRunning: false,
+    pollErrorCount: 0,
 };
 
 function setSection(section) {
@@ -51,6 +54,7 @@ function resetToUpload() {
     appState.files = [];
     appState.zipUrl = null;
     appState.isRunning = false;
+    appState.pollErrorCount = 0;
     window.onbeforeunload = null;
     elements.fileInput.value = '';
     elements.selectedFile.classList.add('hidden');
@@ -67,7 +71,22 @@ function stopPolling() {
 }
 
 async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options);
+    let response;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+        response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error('请求超时，请稍后重试');
+        }
+        throw new Error(`无法连接服务端（${window.location.origin}）`);
+    } finally {
+        clearTimeout(timeoutId);
+    }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
         throw new Error(data.error || `请求失败（${response.status}）`);
@@ -111,12 +130,59 @@ function renderFiles() {
 
     visibleFiles.forEach((file) => {
         const row = document.createElement('tr');
-        row.innerHTML = `
-            <td title="${file.name}">${file.name}</td>
-            <td class="col-action"><a class="link-download" href="${file.url}" download>下载 PDF</a></td>
-        `;
+
+        const nameCell = document.createElement('td');
+        nameCell.title = file.name;
+        nameCell.textContent = file.name;
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'col-action';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-link-download';
+        btn.textContent = '下载 PDF';
+        btn.addEventListener('click', async () => {
+            try {
+                await downloadBlob(file.url, file.name);
+            } catch (error) {
+                alert(`下载失败：${error.message}`);
+            }
+        });
+
+        actionCell.appendChild(btn);
+        row.appendChild(nameCell);
+        row.appendChild(actionCell);
         elements.filesTbody.appendChild(row);
     });
+}
+
+async function downloadBlob(url, fileName) {
+    let response;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+        response = await fetch(url, { signal: controller.signal });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error('下载超时，请稍后重试');
+        }
+        throw new Error(`无法连接服务端（${window.location.origin}）`);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `下载失败（${response.status}）`);
+    }
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(blobUrl);
 }
 
 function showError(message) {
@@ -139,6 +205,7 @@ async function loadJobFiles(jobId) {
 async function pollJobStatus(jobId) {
     try {
         const job = await fetchJson(`/jobs/${jobId}`);
+        appState.pollErrorCount = 0;
         updateRunningView(job);
 
         if (job.status === 'success') {
@@ -153,12 +220,18 @@ async function pollJobStatus(jobId) {
             throw new Error(job.error || '任务执行失败');
         }
     } catch (error) {
-        showError(error.message);
+        appState.pollErrorCount += 1;
+        if (appState.pollErrorCount >= MAX_POLL_ERROR_RETRIES) {
+            showError(error.message);
+            return;
+        }
+        elements.statusText.textContent = `连接异常，正在重试（${appState.pollErrorCount}/${MAX_POLL_ERROR_RETRIES}）...`;
     }
 }
 
 function startPolling(jobId) {
     stopPolling();
+    appState.pollErrorCount = 0;
     pollJobStatus(jobId);
     appState.pollTimer = setInterval(() => pollJobStatus(jobId), POLL_INTERVAL_MS);
 }
@@ -171,6 +244,13 @@ async function createJob(file) {
 
     const formData = new FormData();
     formData.append('file', file);
+
+    try {
+        await fetchJson('/healthz');
+    } catch (error) {
+        showError(`服务不可用：${error.message}`);
+        return;
+    }
 
     setSection('running');
     elements.statusText.textContent = '文件上传中...';
@@ -228,8 +308,10 @@ function bindEvents() {
     elements.searchInput.addEventListener('input', renderFiles);
 
     elements.zipDownloadBtn.addEventListener('click', () => {
-        if (!appState.zipUrl) return;
-        window.location.href = appState.zipUrl;
+        if (!appState.zipUrl || !appState.jobId) return;
+        downloadBlob(appState.zipUrl, `${appState.jobId}-reports.zip`).catch((error) => {
+            alert(`ZIP 下载失败：${error.message}`);
+        });
     });
 
     elements.newTaskBtn.addEventListener('click', resetToUpload);

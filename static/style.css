@@ -274,13 +274,18 @@ body {
     text-align: right;
 }
 
-.link-download {
+.btn-link-download {
+    background: transparent;
+    border: none;
     color: #1565c0;
     text-decoration: none;
+    font-size: 14px;
     font-weight: 600;
+    cursor: pointer;
+    padding: 0;
 }
 
-.link-download:hover {
+.btn-link-download:hover {
     text-decoration: underline;
 }
 
