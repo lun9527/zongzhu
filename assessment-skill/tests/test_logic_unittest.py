@@ -81,6 +81,10 @@ class LogicRegressionTest(unittest.TestCase):
         self.assertTrue(any(item.startswith('核心任务：') for item in advices))
         self.assertTrue(any('核对清单' in item for item in advices))
 
+    def test_rank_boundary_handles_float_precision(self):
+        # 历史回归：55.1 因浮点误差变成 55.099999999999994 时不能误判为一段
+        self.assertEqual(self.generator.get_rank(55.099999999999994), '六段')
+
 
 if __name__ == '__main__':
     unittest.main()

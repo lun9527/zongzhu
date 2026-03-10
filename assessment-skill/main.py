@@ -326,6 +326,9 @@ class AssessmentReportGenerator:
 
     def get_rank(self, total_score):
         """根据总分获取段位"""
+        # 浮点相加在边界值（如 55.1）可能出现 55.0999999999，
+        # 先统一到两位小数，避免落入区间空档后被兜底为一段。
+        total_score = round(float(total_score), 2)
         for rank, (min_score, max_score) in self.rank_ranges.items():
             if min_score <= total_score <= max_score:
                 return rank
@@ -402,7 +405,8 @@ class AssessmentReportGenerator:
                 ability_scores[ability] = float(score) if pd.notna(score) else 0.0
 
             # 计算总分
-            total_score = sum(ability_scores.values())
+            # 与Excel展示精度对齐，避免浮点边界误判段位
+            total_score = round(sum(ability_scores.values()), 2)
 
             # 获取段位
             rank = self.get_rank(total_score)
