@@ -1,0 +1,272 @@
+# 九段总助测评报告自动化系统 - 详细实施指南
+
+
+### 节点0：开始节点（Start）
+
+**操作步骤**：
+
+1. 在画布上已经有一个默认的"开始"节点
+2. 点击"开始"节点
+3. 在右侧配置面板中：
+   - **变量名称**：`excel_file`
+   - **变量类型**：选择 `File`（文件类型）
+   - **描述**：`请上传总助九段胜任力专业测评Excel文件`
+   - **是否必填**：开启
+
+4. 点击右上角"保存"按钮
+
+---
+
+### 节点1：代码节点 - 解析Excel数据
+
+**操作步骤**：
+
+1. 从左侧面板拖拽一个"代码"节点到画布
+2. 将"开始"节点的输出连接到这个代码节点
+3. 点击这个代码节点，重命名为：`解析Excel`
+
+4. 在右侧代码编辑器中，选择语言：**Python**
+
+5. 复制并粘贴以下完整代码：
+
+```python
+import pandas as pd
+import json
+
+def parse_excel(file_path):
+    """
+    解析Excel文件，提取关键数据
+    """
+    try:
+        # 读取Excel文件
+        df = pd.read_excel(file_path, sheet_name=0)
+
+        # 提取第一行数据（测评结果）
+        # A列（索引0）：序号
+        # CX列（索引83）：微信昵称
+        # DB列（索引87）：总分
+        # DC-DK列（索引87-95）：9个能力维度分数
+
+        data = {
+            'sequence_no': str(df.iloc[0, 0]).strip(),  # A列：序号
+            'wechat_name': str(df.iloc[0, 83]).strip(),  # CX列：微信昵称（第84列）
+            'total_score': float(df.iloc[0, 87]),  # DB列：总分（第88列）
+        }
+
+        # 提取9个能力维度分数（DC-DK列，索引87-95）
+        abilities = ['执行力', '协调力', '优化力', '统筹力', '预见力', '业务力', '财务力', '领导力', '决策力']
+        ability_scores = {}
+
+        for i, ability in enumerate(abilities):
+            col_idx = 87 + i  # DC列是第88列（索引87）
+            try:
+                score = float(df.iloc[0, col_idx])
+                ability_scores[ability] = score
+            except:
+                ability_scores[ability] = 0.0
+
+        data['ability_scores'] = ability_scores
+
+        return {
+            'success': True,
+            'data': data,
+            'message': 'Excel解析成功'
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'Excel解析失败: {str(e)}',
+            'data': None
+        }
+
+# 执行解析
+result = parse_excel(excel_file)
+
+# 返回结果
+return result
+```
+
+6. 配置输入变量：
+   - 点击"输入变量"标签
+   - 添加变量：`excel_file`，类型为`File`，引用上一个节点的输出
+
+7. 配置输出变量：
+   - 点击"输出变量"标签
+   - 添加输出变量：
+     - `parsed_data`（Object类型）
+
+8. 点击"保存"
+
+---
+
+### 节点2：代码节点 - 计算段位和等级
+
+**操作步骤**：
+
+1. 拖拽新的"代码"节点，命名为：`计算段位和等级`
+2. 连接上一个节点的输出到这个节点
+
+3. 粘贴以下代码：
+
+```python
+def calculate_rank_and_grades(parsed_data):
+    """
+    根据分数计算综合段位和各能力等级
+    """
+    total_score = parsed_data['total_score']
+    ability_scores = parsed_data['ability_scores']
+
+    # ========== 1. 计算综合段位 ==========
+    if total_score <= 15.09:
+        rank = '一段'
+        rank_num = 1
+    elif total_score <= 30.09:
+        rank = '二段'
+        rank_num = 2
+    elif total_score <= 40.09:
+        rank = '三段'
+        rank_num = 3
+    elif total_score <= 45.09:
+        rank = '四段'
+        rank_num = 4
+    elif total_score <= 55.09:
+        rank = '五段'
+        rank_num = 5
+    elif total_score <= 70.09:
+        rank = '六段'
+        rank_num = 6
+    elif total_score <= 75.09:
+        rank = '七段'
+        rank_num = 7
+    elif total_score <= 85.09:
+        rank = '八段'
+        rank_num = 8
+    else:
+        rank = '九段'
+        rank_num = 9
+
+    # ========== 2. 计算各能力等级 ==========
+    def get_ability_grade(ability, score):
+        """
+        根据能力类型和分数确定等级
+        不同能力维度使用不同的评分标准
+        """
+        if ability in ['执行力', '协调力', '优化力']:
+            # 核心基石：8分制
+            if score >= 7.2: return 'A'
+            elif score >= 6.4: return 'B'
+            elif score >= 5.6: return 'C'
+            elif score >= 4.8: return 'D'
+            else: return 'E'
+
+        elif ability in ['统筹力', '预见力', '业务力']:
+            # 价值引擎：10分制
+            if score >= 9.0: return 'A'
+            elif score >= 8.0: return 'B'
+            elif score >= 7.0: return 'C'
+            elif score >= 6.0: return 'D'
+            else: return 'E'
+
+        else:  # 财务力、领导力、决策力
+            # 领导潜能：12分制
+            if score >= 10.8: return 'A'
+            elif score >= 9.6: return 'B'
+            elif score >= 8.4: return 'C'
+            elif score >= 7.2: return 'D'
+            else: return 'E'
+
+    # 计算所有能力的等级
+    ability_grades = {}
+    for ability, score in ability_scores.items():
+        grade = get_ability_grade(ability, score)
+        ability_grades[ability] = {
+            'score': score,
+            'grade': grade
+        }
+
+    return {
+        'rank': rank,
+        'rank_num': rank_num,
+        'total_score': total_score,
+        'ability_grades': ability_grades,
+        'sequence_no': parsed_data['sequence_no'],
+        'wechat_name': parsed_data['wechat_name'],
+        'message': f'段位计算成功：{rank}'
+    }
+
+# 执行计算
+result = calculate_rank_and_grades(parsed_data)
+
+# 返回结果
+return result
+```
+
+4. 配置输入变量：`parsed_data`（Object类型）
+5. 配置输出变量：`rank_data`（Object类型）
+6. 保存
+
+---
+
+### 节点3：代码节点 - 匹配语料库文字
+
+这是最重要的节点之一，需要包含所有语料库内容。
+
+**操作步骤**：
+
+1. 拖拽新的"代码"节点，命名为：`匹配语料库`
+2. 连接上一个节点的输出
+
+3. 粘贴以下代码（**这是完整版本，包含所有语料库内容**）：
+
+由于代码较长，请参考计划文件中的完整内容...
+
+4. 配置输入变量：`rank_data`（Object类型）
+5. 配置输出变量：`matched_content`（Object类型）
+6. 保存
+
+---
+
+### 节点4：代码节点 - 生成个性化发展计划
+
+**操作步骤**：
+
+1. 拖拽新的"代码"节点，命名为：`生成发展计划`
+2. 连接上一个节点的输出
+3. 粘贴代码（包含完整的发展计划语料库）
+4. 配置输入变量：`matched_content`（Object类型）
+5. 配置输出变量：`plan_data`（Object类型）
+6. 保存
+
+---
+
+### 节点5：代码节点 - 生成雷达图和PDF
+
+这是最后一个也是最复杂的代码节点。
+
+**操作步骤**：
+
+1. 拖拽新的"代码"节点，命名为：`生成PDF`
+2. 连接上一个节点的输出
+3. 粘贴代码（第一部分：雷达图生成函数 + 第二部分：PDF生成函数）
+4. 配置输入变量：`plan_data`（Object类型）
+5. 配置输出变量：`pdf_result`（Object类型）
+6. 保存
+
+**重要提示**：
+- 如果Coze提示缺少某些库（如matplotlib、reportlab），需要先安装
+- 在代码节点中可以尝试使用 `!pip install` 命令安装依赖
+
+---
+
+### 节点6：结束节点（End）
+
+**操作步骤**：
+
+1. 画布上已经有一个默认的"结束"节点
+2. 将上一个节点的输出连接到"结束"节点
+3. 点击"结束"节点，配置输出：
+   - **输出变量**：引用 `pdf_result`
+   - **输出类型**：文件（File）
+
+4. 保存

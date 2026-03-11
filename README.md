@@ -9,6 +9,11 @@ pinned: false
 
 一个基于 Excel 上传、按三份 TXT 语料执行判读逻辑、批量生成 PDF 报告的 Web 系统。
 
+## 文档入口
+
+- 维护手册：`/Users/yanzhanglun/Desktop/测评报告/MAINTENANCE.md`
+- 部署说明：`/Users/yanzhanglun/Desktop/测评报告/DEPLOYMENT.md`
+
 ## 1. 项目目标
 
 - 输入：固定格式的 Excel（`.xlsx`/`.xls`）。
@@ -32,6 +37,9 @@ pinned: false
 
 总分 = 九项能力分值之和：
 - 执行力、协调力、优化力、统筹力、预见力、业务力、财务力、领导力、决策力
+
+实现细节（当前版本）：
+- 判段前先对总分做 `round(total_score, 2)`，避免浮点边界误判（例如 `55.099999999999994`）。
 
 段位区间：
 - 一段：`0 - 15.09`
@@ -112,15 +120,22 @@ pinned: false
 ## 5. 输出规则
 
 - 文件命名：`九段总助测评结果报告-NLZ100{序号}-{微信昵称}-{段位}.pdf`
-- 下载地址：`/download/<job_id>/<filename>`
-- 每次上传返回 `job_id` 与该次任务的文件列表。
+- 新下载地址：`/jobs/<job_id>/file/<int:file_index>`
+- ZIP 下载地址：`/jobs/<job_id>/archive`
+- 兼容旧下载地址：`/download/<job_id>/<filename>`
+- 每次上传返回 `job_id` 与该次任务文件列表/下载入口。
 
 ## 6. API 一览
 
 - `GET /`：上传页面
-- `POST /upload`：上传 Excel 并生成报告
-- `GET /download/<job_id>/<filename>`：下载报告
 - `GET /healthz`：健康检查
+- `POST /jobs`：创建异步生成任务（推荐）
+- `GET /jobs/<job_id>`：查询任务状态/进度
+- `GET /jobs/<job_id>/files`：获取任务生成文件
+- `GET /jobs/<job_id>/file/<int:file_index>`：下载单个 PDF
+- `GET /jobs/<job_id>/archive`：下载该任务 ZIP
+- `POST /upload`：同步接口（兼容旧调用）
+- `GET /download/<job_id>/<filename>`：兼容旧下载接口
 
 ## 7. 本地运行
 

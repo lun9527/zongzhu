@@ -231,6 +231,26 @@ body {
     margin-bottom: 12px;
 }
 
+.result-notice {
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #f0d2b7;
+    background: #fff7ef;
+    color: #8a4b16;
+}
+
+.result-notice strong {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.result-notice p {
+    font-size: 13px;
+    line-height: 1.6;
+}
+
 .toolbar input {
     width: 360px;
     max-width: 100%;

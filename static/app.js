@@ -18,6 +18,7 @@ const elements = {
     statPercent: document.getElementById('stat-percent'),
     statCurrent: document.getElementById('stat-current'),
     resultSummary: document.getElementById('result-summary'),
+    resultNotice: document.getElementById('result-notice'),
     filesTbody: document.getElementById('files-tbody'),
     searchInput: document.getElementById('file-search-input'),
     zipDownloadBtn: document.getElementById('zip-download-btn'),
@@ -31,6 +32,8 @@ const appState = {
     jobId: null,
     files: [],
     zipUrl: null,
+    summary: null,
+    failedItems: [],
     pollTimer: null,
     isRunning: false,
     pollErrorCount: 0,
@@ -53,6 +56,8 @@ function resetToUpload() {
     appState.jobId = null;
     appState.files = [];
     appState.zipUrl = null;
+    appState.summary = null;
+    appState.failedItems = [];
     appState.isRunning = false;
     appState.pollErrorCount = 0;
     window.onbeforeunload = null;
@@ -61,6 +66,8 @@ function resetToUpload() {
     elements.selectedFile.textContent = '';
     elements.searchInput.value = '';
     elements.filesTbody.innerHTML = '';
+    elements.resultNotice.classList.add('hidden');
+    elements.resultNotice.innerHTML = '';
     setSection('upload');
 }
 
@@ -95,7 +102,36 @@ async function fetchJson(url, options = {}) {
 }
 
 function isExcelFile(fileName) {
-    return fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+    return /\.(xlsx|xls)$/i.test(fileName);
+}
+
+function renderResultNotice() {
+    const summary = appState.summary || {};
+    const failedItems = appState.failedItems || [];
+    const failedCount = Number(summary.failed_count || 0);
+
+    if (!failedCount) {
+        elements.resultNotice.classList.add('hidden');
+        elements.resultNotice.innerHTML = '';
+        return;
+    }
+
+    const preview = failedItems.slice(0, 3).map((item) => {
+        const seq = item.seq_no ? `NLZ100${item.seq_no}` : `第${item.index}行`;
+        const name = item.nickname ? ` ${item.nickname}` : '';
+        return `${seq}${name}：${item.error}`;
+    });
+
+    const title = document.createElement('strong');
+    title.textContent = '本次批量生成存在失败项';
+
+    const detail = document.createElement('p');
+    detail.textContent = `成功 ${summary.generated_count || 0} 份，失败 ${failedCount} 份。${preview.join('；')}`;
+
+    elements.resultNotice.innerHTML = '';
+    elements.resultNotice.appendChild(title);
+    elements.resultNotice.appendChild(detail);
+    elements.resultNotice.classList.remove('hidden');
 }
 
 function updateRunningView(job) {
@@ -197,7 +233,13 @@ async function loadJobFiles(jobId) {
     const data = await fetchJson(`/jobs/${jobId}/files`);
     appState.files = data.files || [];
     appState.zipUrl = `/jobs/${jobId}/archive`;
-    elements.resultSummary.textContent = `共生成 ${data.count} 份报告`;
+    appState.summary = data.summary || null;
+    appState.failedItems = data.failed_items || [];
+    const failedCount = Number((appState.summary || {}).failed_count || 0);
+    elements.resultSummary.textContent = failedCount
+        ? `成功生成 ${data.count} 份报告，失败 ${failedCount} 份`
+        : `共生成 ${data.count} 份报告`;
+    renderResultNotice();
     renderFiles();
     setSection('result');
 }
@@ -208,7 +250,7 @@ async function pollJobStatus(jobId) {
         appState.pollErrorCount = 0;
         updateRunningView(job);
 
-        if (job.status === 'success') {
+        if (job.status === 'success' || job.status === 'partial_success') {
             stopPolling();
             appState.isRunning = false;
             window.onbeforeunload = null;

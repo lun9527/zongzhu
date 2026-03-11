@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import datetime, timedelta
+import json
 from pathlib import Path
 from threading import Lock
 from urllib.parse import quote
@@ -34,6 +36,7 @@ OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'xlsx', 'xls'}
 JOB_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]+$')
+JOB_STATE_FILENAME = 'job_state.json'
 REQUIRED_COLUMNS = {
     '序号',
     '微信昵称',
@@ -86,6 +89,37 @@ def build_report_files(job_id, generated_files):
     return report_files
 
 
+def get_job_state_path(job_id, output_dir=None):
+    if output_dir:
+        return Path(output_dir) / JOB_STATE_FILENAME
+    return OUTPUT_ROOT / job_id / JOB_STATE_FILENAME
+
+
+def persist_job_state(job):
+    output_dir = job.get('output_dir')
+    if not output_dir:
+        return
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    state_path = get_job_state_path(job.get('job_id', ''), output_dir_path)
+    temp_path = state_path.with_suffix('.tmp')
+    serialized = json.dumps(job, ensure_ascii=False, indent=2)
+    temp_path.write_text(serialized, encoding='utf-8')
+    temp_path.replace(state_path)
+
+
+def load_job_state(job_id):
+    state_path = get_job_state_path(job_id)
+    if not state_path.exists():
+        return None
+
+    try:
+        return json.loads(state_path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
 def cleanup_old_jobs():
     """清理过期任务目录，并限制最大保留数量。"""
     expiry_ts = (datetime.now() - timedelta(hours=JOB_RETENTION_HOURS)).timestamp()
@@ -131,28 +165,37 @@ def save_upload_to_job_dirs(file_storage):
 
 
 def init_job_state(job_id, excel_path, output_dir):
+    job_state = {
+        'job_id': job_id,
+        'status': 'queued',
+        'message': '任务已创建，等待执行。',
+        'error': None,
+        'excel_path': str(excel_path),
+        'output_dir': str(output_dir),
+        'created_at': now_iso(),
+        'started_at': None,
+        'finished_at': None,
+        'progress': {
+            'total': 0,
+            'completed': 0,
+            'percent': 0.0,
+            'current_index': 0,
+            'current_seq': '',
+            'current_name': '',
+        },
+        'files': [],
+        'zip_name': None,
+        'summary': {
+            'total': 0,
+            'generated_count': 0,
+            'failed_count': 0,
+        },
+        'failed_items': [],
+    }
     with JOBS_LOCK:
-        JOBS[job_id] = {
-            'job_id': job_id,
-            'status': 'queued',
-            'message': '任务已创建，等待执行。',
-            'error': None,
-            'excel_path': str(excel_path),
-            'output_dir': str(output_dir),
-            'created_at': now_iso(),
-            'started_at': None,
-            'finished_at': None,
-            'progress': {
-                'total': 0,
-                'completed': 0,
-                'percent': 0.0,
-                'current_index': 0,
-                'current_seq': '',
-                'current_name': '',
-            },
-            'files': [],
-            'zip_name': None,
-        }
+        JOBS[job_id] = job_state
+        snapshot = deepcopy(job_state)
+    persist_job_state(snapshot)
 
 
 def update_job_state(job_id, **updates):
@@ -161,7 +204,9 @@ def update_job_state(job_id, **updates):
         if not job:
             return None
         job.update(updates)
-        return job
+        snapshot = deepcopy(job)
+    persist_job_state(snapshot)
+    return snapshot
 
 
 def update_job_progress(job_id, payload):
@@ -188,8 +233,19 @@ def update_job_progress(job_id, payload):
                 f"已完成 {progress['completed']}/{progress['total']}，"
                 f"当前：NLZ100{progress['current_seq']} {progress['current_name']}"
             )
+        elif event == 'item_failed':
+            job['message'] = (
+                f"第 {progress['current_index']}/{progress['total']} 份生成失败，"
+                f"当前：NLZ100{progress['current_seq']} {progress['current_name']}"
+            )
         elif event == 'completed':
-            job['message'] = f"生成完成，共 {progress['completed']} 份报告。"
+            failed_count = payload.get('failed_count', 0)
+            if failed_count:
+                job['message'] = f"生成完成，成功 {progress['completed']} 份，失败 {failed_count} 份。"
+            else:
+                job['message'] = f"生成完成，共 {progress['completed']} 份报告。"
+        snapshot = deepcopy(job)
+    persist_job_state(snapshot)
 
 
 def serialize_job_state(job):
@@ -202,6 +258,8 @@ def serialize_job_state(job):
         'started_at': job['started_at'],
         'finished_at': job['finished_at'],
         'progress': job['progress'],
+        'summary': job.get('summary', {}),
+        'failed_items': job.get('failed_items', []),
     }
 
 
@@ -221,17 +279,39 @@ def run_generation_job(job_id, excel_path, output_dir):
             str(output_dir),
             progress_callback=lambda payload: update_job_progress(job_id, payload),
         )
+        summary = generator.last_run_summary or {
+            'total': 0,
+            'generated_count': len(generated_files or []),
+            'failed_count': 0,
+            'failed_items': [],
+        }
 
         if not generated_files:
+            if summary.get('failed_count'):
+                first_error = summary['failed_items'][0]['error']
+                raise RuntimeError(f"全部报告生成失败，共 {summary['failed_count']} 条。首个错误：{first_error}")
             raise RuntimeError('未能生成报告，请检查Excel文件格式。')
 
         report_files = build_report_files(job_id, generated_files)
+        failed_count = summary.get('failed_count', 0)
+        status = 'partial_success' if failed_count else 'success'
+        message = (
+            f'报告部分生成成功，成功 {len(report_files)} 份，失败 {failed_count} 份。'
+            if failed_count else
+            f'报告生成成功，共 {len(report_files)} 份。'
+        )
         update_job_state(
             job_id,
-            status='success',
-            message=f'报告生成成功，共 {len(report_files)} 份。',
+            status=status,
+            message=message,
             finished_at=now_iso(),
             files=report_files,
+            summary={
+                'total': summary.get('total', len(report_files) + failed_count),
+                'generated_count': len(report_files),
+                'failed_count': failed_count,
+            },
+            failed_items=summary.get('failed_items', []),
         )
     except Exception as exc:
         app.logger.exception("job=%s 处理失败: %s", job_id, exc)
@@ -247,6 +327,12 @@ def run_generation_job(job_id, excel_path, output_dir):
 def get_valid_job(job_id):
     if not JOB_ID_PATTERN.match(job_id):
         return None, (jsonify({'error': '非法任务ID'}), 400)
+
+    disk_job = load_job_state(job_id)
+    if disk_job:
+        with JOBS_LOCK:
+            JOBS[job_id] = disk_job
+        return disk_job, None
 
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -322,11 +408,14 @@ def get_job_files(job_id):
         return err
 
     status = job['status']
-    if status == 'success':
+    if status in {'success', 'partial_success'}:
         return jsonify({
             'job_id': job_id,
+            'status': status,
             'count': len(job['files']),
             'files': job['files'],
+            'summary': job.get('summary', {}),
+            'failed_items': job.get('failed_items', []),
         })
     if status == 'failed':
         return jsonify({
@@ -346,7 +435,7 @@ def download_job_file(job_id, file_index):
     if err:
         return err
 
-    if job['status'] != 'success':
+    if job['status'] not in {'success', 'partial_success'}:
         return jsonify({'error': '任务尚未完成，无法下载文件'}), 409
 
     files = job.get('files') or []
@@ -373,7 +462,7 @@ def download_job_archive(job_id):
     if err:
         return err
 
-    if job['status'] != 'success':
+    if job['status'] not in {'success', 'partial_success'}:
         return jsonify({'error': '任务尚未完成，无法打包下载'}), 409
 
     output_dir = Path(job['output_dir'])
@@ -420,6 +509,12 @@ def upload_file():
         app.logger.info("job=%s 初始化生成器", job_id)
         generator = AssessmentReportGenerator()
         generated_files = generator.generate_report(str(excel_path), str(output_dir))
+        summary = generator.last_run_summary or {
+            'total': 0,
+            'generated_count': len(generated_files or []),
+            'failed_count': 0,
+            'failed_items': [],
+        }
         app.logger.info(
             "job=%s 生成完成, 文件数: %s",
             job_id,
@@ -427,12 +522,30 @@ def upload_file():
         )
 
         if not generated_files:
+            if summary.get('failed_count'):
+                first_error = summary['failed_items'][0]['error']
+                return jsonify({'error': f"全部报告生成失败，共 {summary['failed_count']} 条。首个错误：{first_error}"}), 500
             return jsonify({'error': '未能生成报告，请检查Excel文件格式'}), 500
 
+        failed_count = summary.get('failed_count', 0)
+        status = 'partial_success' if failed_count else 'success'
+        message = (
+            f'报告部分生成成功，成功 {len(generated_files)} 份，失败 {failed_count} 份'
+            if failed_count else
+            '报告生成成功'
+        )
+
         return jsonify({
-            'message': '报告生成成功',
+            'message': message,
+            'status': status,
             'job_id': job_id,
             'files': build_report_files(job_id, generated_files),
+            'summary': {
+                'total': summary.get('total', len(generated_files) + failed_count),
+                'generated_count': len(generated_files),
+                'failed_count': failed_count,
+            },
+            'failed_items': summary.get('failed_items', []),
         })
     except Exception as exc:
         app.logger.exception("job=%s 处理失败: %s", job_id, exc)

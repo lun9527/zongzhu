@@ -1,99 +1,121 @@
-# 部署方案（低维护、非大规模场景）
+# 部署说明（当前生产方案）
 
-你当前场景（小规模、希望快上线）最推荐：
-- GitHub 托管代码
-- Hugging Face Spaces（Docker，自动分配 `*.hf.space` 域名 + 自动 HTTPS）
+当前推荐与已验证方案：**Hugging Face Spaces（Docker）**。  
+当前线上 Space：`lun9527/zongzhu`
 
-## 0. 免付费门槛方案（推荐）
+- Space 页面：<https://huggingface.co/spaces/lun9527/zongzhu>
+- 访问域名：<https://lun9527-zongzhu.hf.space>
 
-如果 Render 页面提示付费，建议切换到 Hugging Face Spaces：
+---
 
-1. 打开：https://huggingface.co/new-space
-2. 填写：
-   - `Owner`：你的 HF 账号
-   - `Space name`：`assessment-report`
-   - `License`：任选（如 `MIT`）
-   - `SDK`：`Docker`
-   - `Visibility`：`Public`（免费）
-3. 本地执行（将当前仓库推送到 Space）：
-   ```bash
-   cd /Users/yanzhanglun/Desktop/测评报告
-   git remote add hf https://huggingface.co/spaces/<你的HF用户名>/assessment-report
-   git push hf main
-   ```
-4. 在 Space 的 `Settings -> Variables` 添加：
-   - `MAX_CONTENT_LENGTH_MB=20`
-   - `JOB_RETENTION_HOURS=24`
-   - `MAX_KEPT_JOBS=300`
-   - `GUNICORN_WORKERS=1`
-   - `GUNICORN_THREADS=2`
-   - `GUNICORN_TIMEOUT=300`
-5. 等待构建完成后访问：
-   - `https://<owner>-assessment-report.hf.space`
+## 1. 部署前提
 
-说明：
-- 项目已支持读取平台 `PORT` 环境变量，无需额外改代码。
-- 适合你当前小规模给朋友使用的场景。
+- 代码仓库在本地：`/Users/yanzhanglun/Desktop/测评报告`
+- Space `README.md` 已包含 front matter：
+  - `sdk: docker`
+  - `app_port: 8080`
+- HF token 需要 `Write access to contents/settings`
 
-## 1. 最省事流程（推荐）
+---
 
-### 1.1 一次性准备
+## 2. 环境变量（Space Settings -> Variables）
 
-你只需要提供 GitHub Token（Classic 或 Fine-grained，具备仓库创建/写入权限）：
+建议配置：
 
-```bash
-export GH_TOKEN='你的GitHubToken'
-```
+- `MAX_CONTENT_LENGTH_MB=20`
+- `JOB_RETENTION_HOURS=24`
+- `MAX_KEPT_JOBS=300`
+- `JOB_WORKERS=1`
+- `GUNICORN_WORKERS=1`
+- `GUNICORN_THREADS=2`
+- `GUNICORN_TIMEOUT=300`
 
-### 1.2 一条命令自动完成
+---
+
+## 3. 发布方式 A：Git 推送（常规）
 
 ```bash
 cd /Users/yanzhanglun/Desktop/测评报告
-./scripts/publish_and_prepare_deploy.sh assessment-report private
+git remote add hf https://huggingface.co/spaces/lun9527/zongzhu  # 已有可跳过
+git fetch hf main
+git push hf main
 ```
 
-脚本会自动做：
-- 初始化 git（如果尚未初始化）
-- 提交当前代码
-- 在你的 GitHub 账号下创建仓库
-- 推送 `main` 分支
-- 输出 Render 一键部署链接
+如果出现非快进错误（`fetch first`），先同步再推：
 
-### 1.3 一键部署
-
-打开脚本输出的链接：
-- `https://render.com/deploy?repo=https://github.com/<你的账号>/<仓库名>`
-
-点击 Deploy 后，Render 会给你一个可直接访问的域名：
-- `https://<service-name>.onrender.com`
-
-你可以直接把这个域名发给朋友使用。
+```bash
+cd /Users/yanzhanglun/Desktop/测评报告
+git fetch hf main
+git checkout -b codex/hf-sync FETCH_HEAD
+git cherry-pick <需要上线的commit>
+git push hf HEAD:main
+git checkout main
+```
 
 ---
 
-## 2. 代码中已具备的部署能力
+## 4. 发布方式 B：API 上传（无须处理 Git 历史冲突）
 
-- `Dockerfile`：容器化运行
-- `render.yaml`：Render Blueprint 配置
-- `/healthz`：健康检查
-- `job_id` 隔离目录：并发更安全
-- 自动清理历史任务目录：减少磁盘堆积
+适合快速替换线上单个文件：
 
----
-
-## 3. 运行参数（Render / Docker 通用）
-
-可通过环境变量调整：
-- `MAX_CONTENT_LENGTH_MB`（默认 `16`）
-- `JOB_RETENTION_HOURS`（默认 `24`）
-- `MAX_KEPT_JOBS`（默认 `300`）
-- `GUNICORN_WORKERS`（默认 `1`）
-- `GUNICORN_THREADS`（默认 `2`）
-- `GUNICORN_TIMEOUT`（默认 `300`）
+```bash
+python3 - <<'PY'
+from huggingface_hub import HfApi
+api = HfApi(token="hf_xxx")
+api.upload_file(
+    path_or_fileobj="/Users/yanzhanglun/Desktop/测评报告/assessment-skill/main.py",
+    path_in_repo="assessment-skill/main.py",
+    repo_id="lun9527/zongzhu",
+    repo_type="space",
+)
+print("ok")
+PY
+```
 
 ---
 
-## 4. 如果你坚持全自动（连部署点击都不想做）
+## 5. 线上验收（每次发布后必做）
 
-可以继续走 API 自动化，但需要额外提供平台 API Key（比如 Render API Key）。
-我拿到后可以继续帮你做“推送后自动创建服务并返回域名”的全链路脚本。
+```bash
+BASE_URL="https://lun9527-zongzhu.hf.space"
+curl -sS "$BASE_URL/healthz"
+curl -sS -X POST -F "file=@/Users/yanzhanglun/Desktop/测评报告/总助九段胜任力专业测评--3.0_20260125161237.xlsx" "$BASE_URL/jobs"
+```
+
+拿到 `job_id` 后：
+
+```bash
+curl -sS "$BASE_URL/jobs/<job_id>"
+curl -sS "$BASE_URL/jobs/<job_id>/files"
+curl -I -sS "$BASE_URL/jobs/<job_id>/archive"
+```
+
+通过标准：
+
+- `/healthz` 为 `status=ok`
+- 任务最终 `status=success`
+- `/files` 可列出生成文件
+- `/archive` 返回 200 且 `content-type: application/zip`
+
+---
+
+## 6. 已知高频故障
+
+1. `Failed to fetch`
+- 多为前端缓存旧 JS、服务未运行或 token/权限异常。
+- 先看 `/healthz`，再看浏览器 Network 的 `POST /jobs`。
+
+2. 字体本地正常、线上异常
+- 检查 `assessment-skill/fonts/template/` 是否为完整字体（非精简子集）。
+- 检查 `pdf_generator_v4.py` 字体优先级与 Matplotlib 字体绑定是否被改动。
+
+3. 段位边界判错（典型：55.1 被判成一段）
+- 根因是浮点误差边界。
+- 当前版本已修复：判段前总分统一 `round(..., 2)`。
+
+---
+
+## 7. 安全提醒
+
+- 不要在聊天、代码或提交历史里暴露 HF token。
+- 一旦泄露，立刻去 <https://huggingface.co/settings/tokens> 撤销并重建。

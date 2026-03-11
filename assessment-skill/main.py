@@ -23,6 +23,8 @@ class AssessmentReportGenerator:
 
     def __init__(self, config_path=None):
         """初始化生成器"""
+        self.last_run_summary = None
+
         # 段位分数范围
         self.rank_ranges = {
             "一段": (0, 15.09),
@@ -101,14 +103,16 @@ class AssessmentReportGenerator:
 
         current_rank = None
         current_content = []
+        rank_line_pattern = re.compile(r'^您的当前段位[:：]\s*(.+?)\s*$')
 
         for line in lines:
             line = line.strip()
-            if line.startswith('您的当前段位：'):
+            rank_match = rank_line_pattern.match(line)
+            if rank_match:
                 if current_rank:
                     ranks[current_rank] = '\n'.join(current_content)
 
-                current_rank = line.split('：')[1]
+                current_rank = rank_match.group(1)
                 current_content = []
             elif current_rank:
                 if line.startswith('段位释义：'):
@@ -324,6 +328,25 @@ class AssessmentReportGenerator:
                 return grade
         return 'E'
 
+    def _sanitize_output_part(self, value, fallback):
+        """清洗输出文件名片段，避免非法路径字符导致单条生成失败。"""
+        text = str(value or '').strip()
+        if not text:
+            return fallback
+
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = text.rstrip('.')
+        return text or fallback
+
+    def _row_failure(self, current_index, user_info, exc):
+        return {
+            'index': current_index,
+            'seq_no': user_info.get('seq_no', ''),
+            'nickname': user_info.get('nickname', ''),
+            'error': str(exc),
+        }
+
     def get_rank(self, total_score):
         """根据总分获取段位"""
         # 浮点相加在边界值（如 55.1）可能出现 55.0999999999，
@@ -373,6 +396,7 @@ class AssessmentReportGenerator:
         })
 
         generated_files = []
+        failed_items = []
 
         # 处理每一行数据
         for idx, row in df.iterrows():
@@ -398,39 +422,40 @@ class AssessmentReportGenerator:
                 'current_name': user_info['nickname'],
             })
 
-            # 提取能力得分
-            ability_scores = {}
-            for ability in self.abilities.keys():
-                score = row.get(f'【{ability}】', 0)
-                ability_scores[ability] = float(score) if pd.notna(score) else 0.0
+            try:
+                # 提取能力得分
+                ability_scores = {}
+                for ability in self.abilities.keys():
+                    score = row.get(f'【{ability}】', 0)
+                    ability_scores[ability] = float(score) if pd.notna(score) else 0.0
 
-            # 计算总分
-            # 与Excel展示精度对齐，避免浮点边界误判段位
-            total_score = round(sum(ability_scores.values()), 2)
+                # 计算总分
+                # 与Excel展示精度对齐，避免浮点边界误判段位
+                total_score = round(sum(ability_scores.values()), 2)
 
-            # 获取段位
-            rank = self.get_rank(total_score)
+                # 获取段位
+                rank = self.get_rank(total_score)
 
-            # 计算各能力等级
-            ability_grades = {}
-            for ability, score in ability_scores.items():
-                ability_grades[ability] = self.calculate_grade(ability, score)
+                # 计算各能力等级
+                ability_grades = {}
+                for ability, score in ability_scores.items():
+                    ability_grades[ability] = self.calculate_grade(ability, score)
 
-            # 获取段位释义
-            rank_text = ""
-            if 'rank' in self.corpus and rank in self.corpus['rank']:
-                rank_text = self.corpus['rank'][rank]
+                # 获取段位释义
+                rank_text = ""
+                if 'rank' in self.corpus and rank in self.corpus['rank']:
+                    rank_text = self.corpus['rank'][rank]
 
-            # 生成报告
-            if output_format.lower() == 'pdf':
-                # 使用PDF生成器
-                output_file = Path(output_dir) / f"九段总助测评结果报告-NLZ100{user_info['seq_no']}-{user_info['nickname']}-{rank}.pdf"
-                print(f"  正在生成PDF报告...")
+                safe_seq = self._sanitize_output_part(user_info['seq_no'], f'row{current_index:03d}')
+                safe_nickname = self._sanitize_output_part(user_info['nickname'], '未命名用户')
+                safe_rank = self._sanitize_output_part(rank, '未知段位')
 
-                try:
+                # 生成报告
+                if output_format.lower() == 'pdf':
+                    output_file = Path(output_dir) / f"九段总助测评结果报告-NLZ100{safe_seq}-{safe_nickname}-{safe_rank}.pdf"
+                    print(f"  正在生成PDF报告...")
+
                     pdf_gen = PDFReportGenerator(str(output_file))
-
-                    # V4 版本直接调用 build 方法，传入所有必要数据
                     pdf_gen.build(
                         user_info=user_info,
                         total_score=total_score,
@@ -439,52 +464,52 @@ class AssessmentReportGenerator:
                         ability_grades=ability_grades,
                         rank_text=rank_text,
                         corpus=self.corpus,
-                        advice_func=self._get_action_advice  # 传入建议获取函数
+                        advice_func=self._get_action_advice
                     )
 
                     print(f"  ✅ PDF报告已生成: {output_file.name}")
                     print(f"     段位: {rank}, 总分: {total_score:.2f}")
-                except Exception as e:
-                    print(f"  ❌ 生成失败: {e}")
-                    emit_progress({
-                        'event': 'item_failed',
-                        'status': 'running',
-                        'total': total,
-                        'completed': len(generated_files),
-                        'percent': round(len(generated_files) * 100.0 / total, 2),
-                        'current_index': current_index,
-                        'current_seq': user_info['seq_no'],
-                        'current_name': user_info['nickname'],
-                        'error': str(e),
-                    })
-                    continue
+                else:
+                    output_file = Path(output_dir) / f"九段总助测评结果报告-NLZ100{safe_seq}-{safe_nickname}-{safe_rank}.txt"
+                    report_content = self._generate_report_content(
+                        user_info, total_score, rank, ability_scores, ability_grades
+                    )
 
-            else:
-                # 使用文本生成器（兼容旧版本）
-                output_file = Path(output_dir) / f"九段总助测评结果报告-NLZ100{user_info['seq_no']}-{user_info['nickname']}-{rank}.txt"
-                report_content = self._generate_report_content(
-                    user_info, total_score, rank, ability_scores, ability_grades
-                )
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write(report_content)
 
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    f.write(report_content)
+                    print(f"  ✅ 文本报告已生成: {output_file.name}")
+                    print(f"     段位: {rank}, 总分: {total_score:.2f}")
 
-                print(f"  ✅ 文本报告已生成: {output_file.name}")
-                print(f"     段位: {rank}, 总分: {total_score:.2f}")
-
-            generated_files.append(str(output_file))
-            emit_progress({
-                'event': 'item_completed',
-                'status': 'running',
-                'total': total,
-                'completed': len(generated_files),
-                'percent': round(len(generated_files) * 100.0 / total, 2),
-                'current_index': current_index,
-                'current_seq': user_info['seq_no'],
-                'current_name': user_info['nickname'],
-                'output_name': output_file.name,
-            })
-            print()
+                generated_files.append(str(output_file))
+                emit_progress({
+                    'event': 'item_completed',
+                    'status': 'running',
+                    'total': total,
+                    'completed': len(generated_files),
+                    'percent': round(len(generated_files) * 100.0 / total, 2),
+                    'current_index': current_index,
+                    'current_seq': user_info['seq_no'],
+                    'current_name': user_info['nickname'],
+                    'output_name': output_file.name,
+                })
+                print()
+            except Exception as e:
+                print(f"  ❌ 生成失败: {e}")
+                failed_item = self._row_failure(current_index, user_info, e)
+                failed_items.append(failed_item)
+                emit_progress({
+                    'event': 'item_failed',
+                    'status': 'running',
+                    'total': total,
+                    'completed': len(generated_files),
+                    'percent': round(len(generated_files) * 100.0 / total, 2),
+                    'current_index': current_index,
+                    'current_seq': user_info['seq_no'],
+                    'current_name': user_info['nickname'],
+                    'error': str(e),
+                })
+                continue
 
         print("=" * 60)
         print(f"✨ 批处理完成！共生成 {len(generated_files)} 份报告")
@@ -492,12 +517,22 @@ class AssessmentReportGenerator:
 
         emit_progress({
             'event': 'completed',
-            'status': 'success',
+            'status': 'failed' if failed_items and not generated_files else (
+                'partial_success' if failed_items else 'success'
+            ),
             'total': total,
             'completed': len(generated_files),
             'percent': 100.0 if total else 0.0,
             'generated_count': len(generated_files),
+            'failed_count': len(failed_items),
         })
+
+        self.last_run_summary = {
+            'total': total,
+            'generated_count': len(generated_files),
+            'failed_count': len(failed_items),
+            'failed_items': failed_items,
+        }
 
         return generated_files
 
